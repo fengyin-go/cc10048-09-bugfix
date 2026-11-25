@@ -43,7 +43,14 @@ class BaseModuleService:
     def get_entry(self, entry_id: int) -> dict[str, Any] | None:
         return store.find(self.MODULE, entry_id)
 
+    def normalize_values(self, values: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+        """子类可在此统一字段口径；返回 (归一后的值, 错误信息)。"""
+        return values, None
+
     def create_entry(self, values: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
+        values, error = self.normalize_values(values)
+        if error:
+            return None, [error]
         missing = [
             field for field in self.REQUIRED_FIELDS
             if not str(values.get(field) or "").strip()

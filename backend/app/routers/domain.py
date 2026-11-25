@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Query
 
 from app.services import SERVICES
 
@@ -41,13 +41,121 @@ def experiment_compute(experiment_id: int) -> dict[str, Any]:
 
 
 @router.get("/significance/{task_id}/run-test")
-def significance_run_test(task_id: int) -> dict[str, Any]:
-    """显著性检验执行。"""
+def significance_run_test(
+    task_id: int,
+    confidence: str | None = Query(default=None),
+    method: str | None = Query(default=None),
+    pending: bool = Query(default=False),
+) -> dict[str, Any]:
+    """显著性检验执行：按实际门槛判定并登记可确认结果批次。
+
+    ``pending=true`` 表示结果还在路上（回执暂时缺失），只留存待回执记录。
+    """
     from app.services.significance import SignificanceService
     svc = SERVICES.get("significance")
     if not svc or not isinstance(svc, SignificanceService):
         raise HTTPException(404, "显著性检验服务不可用")
-    return svc.run_test(task_id)
+    if pending:
+        return svc.compute_pending(task_id, confidence=confidence, method=method)
+    return svc.run_test(task_id, confidence=confidence, method=method)
+
+
+@router.post("/significance/{task_id}/register")
+def significance_register_result(
+    task_id: int, payload: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    """登记一份检验结果：幂等，重试不会生成第二份结论。"""
+    from app.services.significance import SignificanceService
+    svc = SERVICES.get("significance")
+    if not svc or not isinstance(svc, SignificanceService):
+        raise HTTPException(404, "显著性检验服务不可用")
+    return svc.register_result(task_id, payload)
+
+
+@router.post("/significance/{task_id}/pending")
+def significance_pending_result(
+    task_id: int, payload: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    """记录一份回执暂时缺失（结果还在路上）的检验结果。"""
+    from app.services.significance import SignificanceService
+    svc = SERVICES.get("significance")
+    if not svc or not isinstance(svc, SignificanceService):
+        raise HTTPException(404, "显著性检验服务不可用")
+    if "p_value" not in payload and "P值" not in payload:
+        raise HTTPException(422, "缺少 P 值")
+    return svc.preview_pending(
+        task_id,
+        p_value=payload.get("p_value", payload.get("P值")),
+        confidence=payload.get("confidence", payload.get("置信水平")),
+        method=payload.get("method", payload.get("检验方法")),
+        sample=payload.get("sample", payload.get("样本")),
+        source=str(payload.get("source") or "待回执"),
+    )
+
+
+@router.post("/significance/{task_id}/confirm")
+def significance_confirm_result(
+    task_id: int, payload: dict[str, Any] = Body(default_factory=dict)
+) -> dict[str, Any]:
+    """确认检验结果（补登记回执）；重复确认返回同一批次。"""
+    from app.services.significance import SignificanceService
+    svc = SERVICES.get("significance")
+    if not svc or not isinstance(svc, SignificanceService):
+        raise HTTPException(404, "显著性检验服务不可用")
+    batch_id = payload.get("batch_id")
+    if batch_id:
+        return svc.confirm_result(str(batch_id), task_id=task_id)
+    if payload.get("p_value") is not None or payload.get("P值") is not None:
+        merged = dict(payload)
+        merged["confirm"] = True
+        return svc.register_result(task_id, merged)
+    return svc.confirm_result(None, task_id=task_id)
+
+
+@router.get("/significance/{task_id}/review")
+def significance_review(
+    task_id: int,
+    batch_id: str | None = Query(default=None),
+    include_values: bool = Query(default=False),
+) -> dict[str, Any]:
+    """复盘接口：读取当时那次检验的样本、门槛与显著标记。"""
+    from app.services.significance import SignificanceService
+    svc = SERVICES.get("significance")
+    if not svc or not isinstance(svc, SignificanceService):
+        raise HTTPException(404, "显著性检验服务不可用")
+    return svc.review_batch(batch_id=batch_id, task_id=task_id, include_values=include_values)
+
+
+@router.get("/significance/{task_id}/batches")
+def significance_batches(
+    task_id: int, include_values: bool = Query(default=False)
+) -> dict[str, Any]:
+    """列出一个检验任务下的全部可确认结果批次。"""
+    from app.services.significance import SignificanceService
+    svc = SERVICES.get("significance")
+    if not svc or not isinstance(svc, SignificanceService):
+        raise HTTPException(404, "显著性检验服务不可用")
+    return svc.list_batches(task_id, include_values=include_values)
+
+
+@router.get("/significance/{task_id}/pending")
+def significance_pending_list(task_id: int) -> dict[str, Any]:
+    """列出一个检验任务下回执暂时缺失（结果还在路上）的记录。"""
+    from app.services.significance import SignificanceService
+    svc = SERVICES.get("significance")
+    if not svc or not isinstance(svc, SignificanceService):
+        raise HTTPException(404, "显著性检验服务不可用")
+    return svc.list_pending(task_id)
+
+
+@router.get("/significance/batches/all")
+def significance_all_batches(include_values: bool = Query(default=False)) -> dict[str, Any]:
+    """列出全部可确认检验结果批次。"""
+    from app.services.significance import SignificanceService
+    svc = SERVICES.get("significance")
+    if not svc or not isinstance(svc, SignificanceService):
+        raise HTTPException(404, "显著性检验服务不可用")
+    return svc.list_batches(None, include_values=include_values)
 
 
 @router.get("/cohort/{cohort_id}/estimate-scale")

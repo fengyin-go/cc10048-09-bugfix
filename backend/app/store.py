@@ -21,6 +21,19 @@ class Store:
     def rows(self, module: str) -> list[dict[str, Any]]:
         return self._tables.setdefault(module, [])
 
+    def reset(self) -> None:
+        """恢复示例数据，供测试隔离和手动重置使用。"""
+        self._tables = {
+            name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
+        }
+
+    def next_id(self, table: str) -> int:
+        """为加工批次之类的内部序号表取下一个编号。"""
+        rows = self.rows(table)
+        next_value = max((int(row.get("id", 0)) for row in rows), default=0) + 1
+        rows.append({"id": next_value})
+        return next_value
+
     def find(self, module: str, entry_id: int) -> dict[str, Any] | None:
         for row in self.rows(module):
             if int(row.get("id", 0)) == entry_id:

@@ -77,5 +77,29 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 显著性检验口径
+
+- 置信水平统一归一：`0.95`、`"0.95"`、`"95%"`、`95` 都表示 95%，显著门槛
+  `alpha = 0.05`（`0.99`/`"99%"` 对应 `0.01`）。归一逻辑在
+  `backend/app/services/significance_results.py` 的 `parse_confidence`。
+- 每次检验登记一个**可确认检验结果批次**，P 值、置信水平、显著门槛、样本批次和
+  显著标记都来自同一次检验；实验评估和复盘只读批次，不按任务当前设置重算。
+- 登记按「任务 + 方法 + P 值 + 样本」幂等，登记中断后重试不会生成第二份结论；
+  缺少 P 值或样本时返回「没有数据可核」的原因。
+- 实验评估只关联状态为「已确认」的结果批次；回执缺失（待回执）时给出未确认原因，
+  不会把在路上的结果当成结论。
+
+相关接口：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/domain/significance/{id}/run-test` | 按实际门槛计算并登记结果批次；`?pending=true` 表示结果还在路上 |
+| POST | `/api/domain/significance/{id}/register` | 登记/重试登记检验结果（幂等） |
+| POST | `/api/domain/significance/{id}/confirm` | 补回执确认结果批次（幂等） |
+| GET | `/api/domain/significance/{id}/review` | 复盘当时那次检验的样本、门槛与显著标记 |
+| GET | `/api/domain/significance/{id}/batches`、`/pending` | 列出结果批次 / 待回执记录 |
+| PATCH | `/api/significance/{id}` | 更正任务设置（如置信水平），按统一口径校验 |
+| GET | `/api/chains/experiment-evaluate/{exp_id}` | 实验评估，只消费已确认的结果批次 |
+
 领域：数据工程
 子方向：数据分析与数据应用

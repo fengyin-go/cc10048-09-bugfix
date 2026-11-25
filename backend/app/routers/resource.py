@@ -56,12 +56,14 @@ def export_entries(
     }
     items, _ = service.list_entries(
         filters=filters, keyword=keyword, status=status, page=1, size=1_000_000)
+    extra_fields = list(getattr(service, "RESULT_FIELDS", []))
     output = io.StringIO()
     output.write("\ufeff")
     writer = csv.writer(output, lineterminator="\n")
-    writer.writerow(["id", *service.LIST_FIELDS, "status"])
+    writer.writerow(["id", *service.LIST_FIELDS, *extra_fields, "status"])
     for item in items:
         values = [item.get("id"), *(item.get(field, "") for field in service.LIST_FIELDS),
+                  *(item.get(field, "") for field in extra_fields),
                   item.get("status", "")]
         writer.writerow([
             "'" + str(value) if str(value or "").startswith(("=", "+", "-", "@")) else value
@@ -89,6 +91,27 @@ def create_entry(module: str, payload: EntryPayload) -> ActionResult:
     if missing:
         return ActionResult(ok=False, message=f"缺少必填字段：{'、'.join(missing)}")
     return ActionResult(ok=True, message=f"{service.ENTITY}已登记", entry=entry)
+
+
+@router.patch("/{module}/{entry_id}", response_model=ActionResult)
+def update_entry(module: str, entry_id: int, payload: EntryPayload) -> ActionResult:
+    """更正记录字段（例如管理员更正检验任务的置信水平）。
+
+    只允许改列表字段；置信水平按统一口径校验，``0.95`` 与 ``95%`` 等价。
+    """
+    service = require_service(module)
+    entry = service.get_entry(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"{service.ENTITY} {entry_id} 不存在或已归档")
+    updates = payload.values or {}
+    invalid = [field for field in updates if field not in service.LIST_FIELDS]
+    if invalid:
+        return ActionResult(ok=False, message=f"不可更正字段：{'、'.join(invalid)}")
+    updates, error = service.normalize_values(updates)
+    if error:
+        return ActionResult(ok=False, message=error)
+    entry.update(updates)
+    return ActionResult(ok=True, message=f"{service.ENTITY}已更正", entry=entry)
 
 
 @router.post("/{module}/{entry_id}/actions", response_model=ActionResult)
